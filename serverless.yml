@@ -1,0 +1,104 @@
+service: cloudfront-example
+frameworkVersion: ">=1.18.0 <2.0.0"
+
+custom: ${file(./serverless.env.yml)}
+
+provider:
+  name: aws
+  runtime: python3.6
+  stage: ${opt:stage, self:custom.defaultStage}
+  region: ${self:custom.region}
+  profile: ${self:custom.${self:provider.stage}.profiles}
+  timeout: 30
+  iamRoleStatements:
+  - Effect: Allow
+    Action:
+    - cloudfront:GetCloudFrontOriginAccessIdentity
+    - cloudfront:CreateCloudFrontOriginAccessIdentity
+    - cloudfront:UpdateCloudFrontOriginAccessIdentity
+    - cloudfront:DeleteCloudFrontOriginAccessIdentity
+    Resource: "*"
+
+functions:
+  cfnOai:
+    handler: handlers/cfnOai.handler
+
+resources:
+  Resources:
+    PublishBucket:
+      Type: AWS::S3::Bucket
+      Properties: {}
+    PublishBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: PublishBucket
+        PolicyDocument:
+          Statement:
+          - Action: "s3:GetObject"
+            Effect: Allow
+            Resource:
+              Fn::Join:
+              - ""
+              - - Fn::GetAtt:
+                  - PublishBucket
+                  - Arn
+                - /*
+            Principal:
+              AWS:
+                Fn::Join:
+                - ""
+                - - "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity "
+                  - Fn::GetAtt:
+                    - OriginAccessIdentity
+                    - Id
+    OriginAccessIdentity:
+      Type: "Custom::OriginAccessIdentity"
+      Properties:
+        ServiceToken:
+          Fn::GetAtt:
+          - CfnOaiLambdaFunction
+          - Arn
+        CloudFrontOriginAccessIdentityConfig:
+          CallerReference:
+            Ref: AWS::StackName
+          Comment:
+            Ref: AWS::StackName
+    Distribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          HttpVersion: http2
+          Comment:
+            Ref: AWS::StackName
+          DefaultCacheBehavior:
+            AllowedMethods:
+            - HEAD
+            - GET
+            CachedMethods:
+            - HEAD
+            - GET
+            Compress: true
+            DefaultTTL: 86400
+            ForwardedValues:
+              QueryString: false
+            MaxTTL: 31536000
+            MinTTL: 0
+            SmoothStreaming: false
+            TargetOriginId: PublishBucket
+            ViewerProtocolPolicy: allow-all
+          Origins:
+            - Id: PublishBucket
+              DomainName:
+                Fn::GetAtt:
+                - PublishBucket
+                - DomainName
+              S3OriginConfig:
+                OriginAccessIdentity:
+                  Fn::Join:
+                  - ""
+                  - - "origin-access-identity/cloudfront/"
+                    - Fn::GetAtt:
+                      - OriginAccessIdentity
+                      - Id
